@@ -125,9 +125,9 @@ returns nil."
                        (cdr value)
                      ;; Load now.
                      (let ((coding-system-for-read 'utf-8)
-                           (offset                 (caddr value)))
+                           (offset                 (cadr (cdr value))))
                        (with-temp-buffer
-                         (insert-file-contents (nth 0 extmap) nil offset (+ offset (cdddr value)))
+                         (insert-file-contents (nth 0 extmap) nil offset (+ offset (cddr (cdr value))))
                          (let ((new-value (if (= (cadr value) 2) (buffer-string) (read (current-buffer)))))
                            (if weak-data
                                (puthash key new-value weak-data)
