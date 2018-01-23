@@ -121,7 +121,9 @@ just stop using it."
             (let ((item-header (bindat-unpack extmap--item-bindat-spec (encode-coding-string (buffer-substring-no-properties (point) (+ (point) item-header-length)) 'no-conversion))))
               (goto-char (+ (point) item-header-length))
               (puthash key (cons nil (cons type (cons (bindat-get-field item-header 'offset) length))) items)))))
-      (list (cons filename (when (plist-get options :auto-reload) (file-attribute-modification-time (file-attributes filename))))
+      ;; Fifth element of `file-attributes' result is the modification date.
+      ;; `file-attribute-modification-time' doesn't exist in Emacs 25.
+      (list (cons filename (when (plist-get options :auto-reload) (nth 5 (file-attributes filename))))
             items (when (plist-get options :weak-data) (make-hash-table :test #'eq :weakness 'value))))))
 
 ;; After a call to this, any value in `extmap' other than the filename
@@ -134,7 +136,9 @@ just stop using it."
 (defun extmap--do-reload-if-needed (extmap)
   (let ((filename (car (nth 0 extmap)))
         (modtime  (cdr (nth 0 extmap))))
-    (unless (equal (file-attribute-modification-time (file-attributes filename)) modtime)
+    ;; Fifth element of `file-attributes' result is the modification date.
+    ;; `file-attribute-modification-time' doesn't exist in Emacs 25.
+    (unless (equal (nth 5 (file-attributes filename)) modtime)
       (let ((reloaded-extmap (extmap-init filename :auto-reload t :weak-data (nth 2 extmap))))
         (setcar extmap (car reloaded-extmap))
         (setcdr extmap (cdr reloaded-extmap))))))
