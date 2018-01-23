@@ -55,17 +55,37 @@
                                            (offset    u32)))
 
 
-(defun extmap-init (filename &optional weak-data)
+(defun extmap-init (filename &rest options)
   "Load metadata of a previously created map from FILENAME.
 
 Loaded metadata can be further passed to `extmap-get' and other
 functions.  It must be treated as an opaque object: you must not
 alter it or make any assumptions about its contents.
 
-If WEAK-DATA is non-nil, loaded values are stored in a weak
-hashmap and can be garbage-collected by Emacs if no longer used.
-This allows to potentially reduce memory usage at the cost of
-more disk operations.
+OPTIONS can be a list of the following keyword arguments:
+
+  :weak-data
+
+    If non-nil, loaded values are stored in a weak hashmap and
+    can be garbage-collected by Emacs if no longer used.  This
+    allows to potentially reduce memory usage at the cost of more
+    disk operations.
+
+  :auto-reload
+
+    If the backing file is changed, automatically reset the map.
+    By default, backing file is supposed to remain constant and
+    if it changes, that results in undefined map behavior.
+
+    Reloading doesn't affect any already retrieved values.
+    Backing file is considered changed only if its modification
+    time is different compared to the previous check, actual
+    contents is not checked.
+
+    Using this option slows a map down a little, since it has to
+    check file modification time often.  It exists largely for
+    developing, when you'd often re-generate disk files, though
+    nothing precludes using it in end-code either.
 
 The file must remain accessible in case `extmap-get' needs to
 load a value later.  There is no need to somehow close a map:
@@ -101,7 +121,24 @@ just stop using it."
             (let ((item-header (bindat-unpack extmap--item-bindat-spec (encode-coding-string (buffer-substring-no-properties (point) (+ (point) item-header-length)) 'no-conversion))))
               (goto-char (+ (point) item-header-length))
               (puthash key (cons nil (cons type (cons (bindat-get-field item-header 'offset) length))) items)))))
-      (list filename items (when weak-data (make-hash-table :test #'eq :weakness 'value))))))
+      (list (cons filename (when (plist-get options :auto-reload) (file-attribute-modification-time (file-attributes filename))))
+            items (when (plist-get options :weak-data) (make-hash-table :test #'eq :weakness 'value))))))
+
+;; After a call to this, any value in `extmap' other than the filename
+;; might change.
+(defsubst extmap--reload-if-needed (extmap)
+  (let ((modtime (cdr (nth 0 extmap))))
+    (when modtime
+      (extmap--do-reload-if-needed extmap))))
+
+(defun extmap--do-reload-if-needed (extmap)
+  (let ((filename (car (nth 0 extmap)))
+        (modtime  (cdr (nth 0 extmap))))
+    (unless (equal (file-attribute-modification-time (file-attributes filename)) modtime)
+      (let ((reloaded-extmap (extmap-init filename :auto-reload t :weak-data (nth 2 extmap))))
+        (setcar extmap (car reloaded-extmap))
+        (setcdr extmap (cdr reloaded-extmap))))))
+
 
 (defun extmap-get (extmap key &optional no-error)
   "Get value associated with KEY from the map.
@@ -110,6 +147,7 @@ EXTMAP must be a result of a previous call to `extmap-init'.  KEY
 should be a symbol present in the map.  If it is not, function
 signals an error, unless NO-ERROR is specified, in which case it
 returns nil."
+  (extmap--reload-if-needed extmap)
   (let* ((items     (nth 1 extmap))
          (weak-data (nth 2 extmap))
          ;; A key cannot be mapped to `items' table itself, we use
@@ -127,7 +165,7 @@ returns nil."
                      (let ((coding-system-for-read 'utf-8)
                            (offset                 (cadr (cdr value))))
                        (with-temp-buffer
-                         (insert-file-contents (nth 0 extmap) nil offset (+ offset (cddr (cdr value))))
+                         (insert-file-contents (car (nth 0 extmap)) nil offset (+ offset (cddr (cdr value))))
                          (let ((new-value (if (= (cadr value) 2) (buffer-string) (read (current-buffer)))))
                            (if weak-data
                                (puthash key new-value weak-data)
@@ -139,6 +177,7 @@ returns nil."
 
 (defun extmap-contains-key (extmap key)
   "Determine if there is a mapping for given KEY in EXTMAP."
+  (extmap--reload-if-needed extmap)
   (consp (gethash key (nth 1 extmap))))
 
 (defun extmap-value-loaded (extmap key)
@@ -146,9 +185,10 @@ returns nil."
 If there is no mapping for KEY, this function always returns
 nil.
 
-In case the map has been initialized with WEEK-DATA argument, it
+In case the map has been initialized with `:weak-data' option, it
 may happen that this function returns t, but value for the KEY
 has to be loaded again in the future."
+  (extmap--reload-if-needed extmap)
   (or (car-safe (gethash key (nth 1 extmap)))
       (let ((weak-data (nth 2 extmap)))
         (when weak-data
@@ -159,6 +199,7 @@ has to be loaded again in the future."
 The list is in no particular order.
 
 EXTMAP must be a result of a previous call to `extmap-init'."
+  (extmap--reload-if-needed extmap)
   (let (keys)
     (maphash (lambda (key _value) (push key keys)) (nth 1 extmap))
     keys))
@@ -176,6 +217,7 @@ Note that unless CALLBACK exits non-locally (with `throw' or by
 signalling an error), this will result in loading all values into
 memory.  If you just need to enumerate the keys, use
 `extmap-keys' instead."
+  (extmap--reload-if-needed extmap)
   (maphash (lambda (key _value) (funcall callback key (extmap-get extmap key))) (nth 1 extmap)))
 
 (defun extmap-mapcar (extmap callback)
@@ -186,6 +228,7 @@ Returned list corresponds to the order in which keys have been
 passed to CALLBACK.  However, that order can be arbitrary.
 
 See `extmap-mapc' for more information."
+  (extmap--reload-if-needed extmap)
   (let (result)
     (maphash (lambda (key _value) (push (funcall callback key (extmap-get extmap key)) result)) (nth 1 extmap))
     (nreverse result)))
@@ -203,14 +246,15 @@ the following items:
 In some cases maps can report loaded values right after
 initialization.  This is because of value inlining and typically
 happens for small values.  In case the map has been initialized
-with WEEK-DATA argument, `num-loaded' should be seen as an upper
+with `:weak-data' option, `num-loaded' should be seen as an upper
 limit only, as (some) loaded values can be garbage-collected at
 any time."
+  (extmap--reload-if-needed extmap)
   (let ((items      (nth 1 extmap))
         (weak-data  (nth 2 extmap))
         (num-loaded 0))
     (maphash (lambda (_key value) (when (car value) (setq num-loaded (1+ num-loaded)))) items)
-    `((filename   . ,(nth 0 extmap))
+    `((filename   . ,(car (nth 0 extmap)))
       (num-items  . ,(hash-table-count items))
       (num-loaded . ,(+ num-loaded (if weak-data (hash-table-count weak-data) 0))))))
 
