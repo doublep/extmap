@@ -241,7 +241,9 @@ the following items:
 
     `filename': absolute path of the file that contains the map;
     `num-items': number of key-value mappings in the map;
-    `num-loaded': number of loaded values.
+    `num-loaded': number of loaded values;
+    `weak-data' and `auto-reload': t if `extmap-init' has been
+      called with corresponding option.
 
 In some cases maps can report loaded values right after
 initialization.  This is because of value inlining and typically
@@ -254,9 +256,11 @@ any time."
         (weak-data  (nth 2 extmap))
         (num-loaded 0))
     (maphash (lambda (_key value) (when (car value) (setq num-loaded (1+ num-loaded)))) items)
-    `((filename   . ,(car (nth 0 extmap)))
-      (num-items  . ,(hash-table-count items))
-      (num-loaded . ,(+ num-loaded (if weak-data (hash-table-count weak-data) 0))))))
+    `((filename    . ,(car (nth 0 extmap)))
+      (num-items   . ,(hash-table-count items))
+      (num-loaded  . ,(+ num-loaded (if weak-data (hash-table-count weak-data) 0)))
+      (weak-data   . ,(not (null weak-data)))
+      (auto-reload . ,(not (null (cdr (nth 0 extmap))))))))
 
 
 (defun extmap-from-alist (filename data &rest options)
