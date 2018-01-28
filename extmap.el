@@ -7,7 +7,7 @@
 ;; Version:    0.9
 ;; Keywords:   lisp
 ;; Homepage:   https://github.com/doublep/extmap
-;; Package-Requires: ((emacs "25.1"))
+;; Package-Requires: ((emacs "24.1"))
 
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
@@ -35,7 +35,6 @@
 ;;; Code:
 
 (require 'bindat)
-(require 'generator)
 
 
 (defconst extmap--header-bindat-spec '((magic     u16)
@@ -294,7 +293,7 @@ OPTIONS can be a list of the following keyword arguments:
     currently 16, but can be changed in a future package version.
     If this setting is important for you for some reason, always
     specify it explicitly."
-  (apply #'extmap-from-iterator filename (funcall (iter-lambda () (while data (iter-yield (pop data))))) options))
+  (extmap--do-create filename (lambda () (if data (pop data) (throw 'end-of-data nil))) options))
 
 (defun extmap-from-iterator (filename iterator &rest options)
   "Create an externally-stored map from data provided by ITERATOR.
@@ -305,7 +304,17 @@ to declare iterator functions.
 See `extmap-from-alist' for more information.  This function is
 basically the same, but is provided for the cases your values are
 so huge you'd rather provide them one-by-one with an iterator
-rather than keep them all in memory."
+rather than keeping them all in memory.
+
+Only available on Emacs 25, as this requires `generator' package."
+  (require 'generator)
+  (extmap--do-create filename (lambda ()
+                                (condition-case _
+                                    (with-no-warnings (iter-yield iterator))
+                                  (iter-end-of-sequence (throw 'end-of-data nil))))
+                     options))
+
+(defun extmap--do-create (filename data options)
   (with-temp-buffer
     (let ((print-level                nil)
           (print-length               nil)
@@ -319,31 +328,33 @@ rather than keep them all in memory."
       (insert (bindat-pack extmap--header-bindat-spec nil))
       (write-region (point-min) (point-max) filename nil nil nil (if (plist-get options :overwrite) nil 'excl))
       (erase-buffer)
-      (iter-do (item iterator)
-        (let ((key   (car item))
-              (value (cdr item)))
-          (unless (and (symbolp key) (not (string-match (rx 0) (symbol-name key))) (eq (intern (symbol-name key)) key))
-            (error "Wrong key `%S': expected an interned symbol without null character" key))
-          (when (gethash key used-keys)
-            (error "Duplicate key `%s'" key))
-          (puthash key t used-keys)
-          (insert (encode-coding-string (symbol-name key) 'utf-8 t))
-          (insert 0)
-          (with-temp-buffer
-            (let ((serialized (if (stringp value) value (prin1-to-string value))))
-              (unless (or (stringp value) (condition-case _ (equal (read serialized) value) (error nil)))
-                (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
-              (insert (encode-coding-string serialized 'utf-8 t))
-              (let ((num-bytes (buffer-size)))
-                (if (<= num-bytes max-inline-bytes)
-                    (let ((serialized-in (current-buffer)))
-                      (with-current-buffer buffer
-                        (insert (bindat-pack extmap--item-short-bindat-spec `((type . ,(if (stringp value) 0 1)) (length . ,num-bytes))))
-                        (insert-buffer-substring serialized-in)))
-                  (write-region (point-min) (point-max) filename t)
-                  (with-current-buffer buffer
-                    (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (stringp value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
-                    (setq offset (+ offset num-bytes)))))))))
+      (catch 'end-of-data
+        (while t
+          (let* ((item  (funcall data))
+                 (key   (car item))
+                 (value (cdr item)))
+            (unless (and (symbolp key) (not (string-match (rx 0) (symbol-name key))) (eq (intern (symbol-name key)) key))
+              (error "Wrong key `%S': expected an interned symbol without null character" key))
+            (when (gethash key used-keys)
+              (error "Duplicate key `%s'" key))
+            (puthash key t used-keys)
+            (insert (encode-coding-string (symbol-name key) 'utf-8 t))
+            (insert 0)
+            (with-temp-buffer
+              (let ((serialized (if (stringp value) value (prin1-to-string value))))
+                (unless (or (stringp value) (condition-case _ (equal (read serialized) value) (error nil)))
+                  (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
+                (insert (encode-coding-string serialized 'utf-8 t))
+                (let ((num-bytes (buffer-size)))
+                  (if (<= num-bytes max-inline-bytes)
+                      (let ((serialized-in (current-buffer)))
+                        (with-current-buffer buffer
+                          (insert (bindat-pack extmap--item-short-bindat-spec `((type . ,(if (stringp value) 0 1)) (length . ,num-bytes))))
+                          (insert-buffer-substring serialized-in)))
+                    (write-region (point-min) (point-max) filename t)
+                    (with-current-buffer buffer
+                      (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (stringp value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
+                      (setq offset (+ offset num-bytes))))))))))
       (write-region (point-min) (point-max) filename t)
       ;; Update the header.
       (erase-buffer)
