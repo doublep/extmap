@@ -25,11 +25,36 @@
 
 ;;; Commentary:
 
-;; Mapping of symbols to constants that is stored externally and
-;; loaded on-demand.  Should be used for huge databases to avoid
-;; loading everything to memory.  This package doesn't use any
-;; external programs, making it a suitable dependency for smaller
-;; libraries.
+;; Mapping of symbols to constants that is stored externally as a
+;; single binary file and loaded on-demand.  Can be used for huge
+;; databases to avoid loading everything to memory.  This package
+;; doesn't use any external programs, making it a suitable dependency
+;; for smaller libraries.
+;;
+;; Typical usage of the library consists of two separate stages:
+;;
+;;     1) Package maintainer/developer creates a map file, which is
+;;        then distributed along with its `*.el' etc. files.
+;;
+;;     2) For end-user, Elisp code retrieves values from the
+;;        pre-created map file.
+;;
+;; Creating a map file doesn't require any external tools.  See
+;; function `extmap-from-alist' for details.  If you use Emacs 25 or
+;; later and your map is so huge that you don't want to load it fully
+;; even when creating, see `extmap-from-iterator'.
+;;
+;; The main functions for using an existing map file are `extmap-init'
+;; to open it and `extmap-get' to retrieve value associated with given
+;; key.  See function documentation for details.  Other functions that
+;; work with a prepared file:
+;;
+;;     - extmap-contains-key
+;;     - extmap-value-loaded
+;;     - extmap-keys
+;;     - extmap-mapc
+;;     - extmap-mapcar
+;;     - extmap-statistics
 
 
 ;;; Code:
@@ -82,7 +107,7 @@ OPTIONS can be a list of the following keyword arguments:
     contents is not checked.
 
     Using this option slows a map down a little, since it has to
-    check file modification time often.  It exists largely for
+    check file modification time often.  It exists mainly for
     developing, when you'd often re-generate disk files, though
     nothing precludes using it in end-code either.
 
@@ -304,7 +329,7 @@ to declare iterator functions.
 See `extmap-from-alist' for more information.  This function is
 basically the same, but is provided for the cases your values are
 so huge you'd rather provide them one-by-one with an iterator
-rather than keeping them all in memory.
+instead of keeping them all in memory.
 
 Only available on Emacs 25, as this requires `generator' package."
   (require 'generator)
