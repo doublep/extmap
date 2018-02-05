@@ -366,19 +366,19 @@ Only available on Emacs 25, as this requires `generator' package."
             (insert (encode-coding-string (symbol-name key) 'utf-8 t))
             (insert 0)
             (with-temp-buffer
-              (let ((serialized (if (stringp value) value (prin1-to-string value))))
-                (unless (or (stringp value) (condition-case _ (equal (read serialized) value) (error nil)))
+              (let ((serialized (if (extmap--plain-string-p value) value (prin1-to-string value))))
+                (unless (or (extmap--plain-string-p value) (condition-case _ (equal (read serialized) value) (error nil)))
                   (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
                 (insert (encode-coding-string serialized 'utf-8 t))
                 (let ((num-bytes (buffer-size)))
                   (if (<= num-bytes max-inline-bytes)
                       (let ((serialized-in (current-buffer)))
                         (with-current-buffer buffer
-                          (insert (bindat-pack extmap--item-short-bindat-spec `((type . ,(if (stringp value) 0 1)) (length . ,num-bytes))))
+                          (insert (bindat-pack extmap--item-short-bindat-spec `((type . ,(if (extmap--plain-string-p value) 0 1)) (length . ,num-bytes))))
                           (insert-buffer-substring serialized-in)))
                     (write-region (point-min) (point-max) filename t)
                     (with-current-buffer buffer
-                      (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (stringp value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
+                      (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (extmap--plain-string-p value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
                       (setq offset (+ offset num-bytes))))))))))
       (write-region (point-min) (point-max) filename t)
       ;; Update the header.
@@ -388,6 +388,11 @@ Only available on Emacs 25, as this requires `generator' package."
                                                         (num-items . ,(hash-table-count used-keys))
                                                         (offset    . ,offset))))
       (write-region (point-min) (point-max) filename 0))))
+
+(defun extmap--plain-string-p (object)
+  (and (stringp object)
+       (null (text-properties-at 0 object))
+       (null (next-property-change 0 object))))
 
 
 (provide 'extmap)
