@@ -13,6 +13,17 @@ This package doesn’t use any external programs, making it a suitable
 dependency for smaller libraries.
 
 
+## Typical workflow
+
+Normally, map file should be created by package maintainer.  On
+end-user machine, necessary values from this pregenerated file are
+retrieved.  If only relatively few values are required, a lot of
+memory (and probably also CPU time) can be saved by not loading the
+whole available database into memory on the user machine.
+
+For a usage example, refer to package `datetime`.
+
+
 ## Creating a map
 
 Creating disk maps doesn’t involve any additional tools and can be
