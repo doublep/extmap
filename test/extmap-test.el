@@ -25,56 +25,6 @@
 (defvar extmap--test-filename nil)
 
 
-;; This is like built-in `equal-including-properties', except that
-;; property values are compared with the same function, not with `eq'.
-;; Probably not complete.  Slow.
-(defun extmap--equal-including-properties (a b)
-  (cond ((stringp a)
-         (and (stringp b)
-              (string= a b)
-              (let ((at    0)
-                    (equal t))
-                (while (and at equal)
-                  (let ((next (next-property-change at a)))
-                    (setq equal (and (equal next (next-property-change at b))
-                                     (let ((a-properties    (text-properties-at at a))
-                                           (b-properties    (text-properties-at at b))
-                                           (a-property-hash (make-hash-table))
-                                           (b-property-hash (make-hash-table)))
-                                       (while a-properties
-                                         (puthash (pop a-properties) (pop a-properties) a-property-hash))
-                                       (while b-properties
-                                         (puthash (pop b-properties) (pop b-properties) b-property-hash))
-                                       (extmap--equal-including-properties a-property-hash b-property-hash)))
-                          at    next)))
-                equal)))
-        ((consp a)
-         ;; Recursive for lists, but that's not important for testing.
-         (and (consp b)
-              (extmap--equal-including-properties (car a) (car b))
-              (extmap--equal-including-properties (cdr a) (cdr b))))
-        ((vectorp a)
-         (and (vectorp b)
-              (let ((length (length a)))
-                (and (= length (length b))
-                     (let ((equal t)
-                           (k     0))
-                       (while (and equal (< k length))
-                         (setq equal (extmap--equal-including-properties (aref a k) (aref b k))
-                               k     (1+ k)))
-                       equal)))))
-        ((hash-table-p a)
-         (and (hash-table-p b)
-              (= (hash-table-count a) (hash-table-count b))
-              (catch 'equal
-                (maphash (lambda (key value)
-                           (unless (extmap--equal-including-properties value (gethash key b (not a)))
-                             (throw 'equal nil)))
-                         a)
-                t)))
-        (t
-         (equal a b))))
-
 (defun extmap--test-alist (data &rest options)
   (let ((filename (concat extmap--test-directory (or extmap--test-filename "test.extmap"))))
     (apply #'extmap-from-alist filename data :overwrite t options)
@@ -83,7 +33,8 @@
       (dolist (entry data)
         (should (extmap-contains-key extmap (car entry)))
         (should (extmap--equal-including-properties (extmap-get extmap (car entry)) (cdr entry)))
-        (should (extmap-value-loaded extmap (car entry)))))))
+        (should (extmap-value-loaded extmap (car entry))))
+      extmap)))
 
 (defun extmap--test-sort-keys (keys)
   (sort keys (lambda (a b) (string< (symbol-name a) (symbol-name b)))))
@@ -107,6 +58,20 @@
                         (baz  . ,(number-sequence 0 100))
                         (spam . ,(propertize "lalala lalala lalala lalala lalala lalala lalala lalala lalala lalala lalala" 'face '(bold italic)))
                         (ham  . ,(list (propertize "string" 'face '(bold italic)))))))
+
+(ert-deftest extmap-shared-values-1 ()
+  (let ((extmap (extmap--test-alist `((foo . (this value is supposed to be shared))
+                                      (bar . (this value is supposed to be shared)))
+                                    :share-values t :max-inline-bytes 0)))
+    (should (eq (extmap-get extmap 'foo) (extmap-get extmap 'bar))))
+  (let ((extmap (extmap--test-alist `((foo . (this value will not be shared even if equal))
+                                      (bar . (this value will not be shared even if equal))))))
+    (should-not (eq (extmap-get extmap 'foo) (extmap-get extmap 'bar)))))
+
+(ert-deftest extmap-shared-values-2 ()
+  (extmap--test-alist `((foo . (value with different ,(propertize "string properties" 'face 'bold)   must not be shared))
+                        (bar . (value with different ,(propertize "string properties" 'face 'italic) must not be shared)))
+                      :share-values t :max-inline-bytes 0))
 
 
 (ert-deftest extmap-plain-string-p ()

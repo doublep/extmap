@@ -71,7 +71,8 @@
 ;;   0 -- inlined string (short specification is used);
 ;;   1 -- inlined Lisp object (short specification is used);
 ;;   2 -- string;
-;;   3 -- Lisp object.
+;;   3 -- Lisp object;
+;;   4 -- shared value (short specification is used).
 (defconst extmap--item-short-bindat-spec '((type      u8)
                                            (length    u24)))
 (defconst extmap--item-bindat-spec       '((type      u8)
@@ -125,7 +126,7 @@ just stop using it."
       (erase-buffer)
       (unless (= (bindat-get-field header 'magic) #x91f7)
         (error "Wrong or corrupted extmap in file `%s'" filename))
-      (unless (= (bindat-get-field header 'version) 0)
+      (unless (<= (bindat-get-field header 'version) 1)
         (error "Future version of extmap in file `%s', upgrade your `extmap' package" filename))
       (setq items (make-hash-table :test #'eq :size (bindat-get-field header 'num-items)))
       (insert-file-contents-literally filename nil (bindat-get-field header 'offset))
@@ -134,17 +135,22 @@ just stop using it."
                (item-header (bindat-unpack extmap--item-short-bindat-spec (encode-coding-string (buffer-substring-no-properties (point) (+ (point) item-short-header-length)) 'no-conversion)))
                (type        (bindat-get-field item-header 'type))
                (length      (bindat-get-field item-header 'length)))
-          (if (<= type 1)
-              ;; Inlined item.
-              (let ((value (decode-coding-string (buffer-substring-no-properties (+ (point) item-short-header-length) (+ (point) item-short-header-length length)) 'utf-8 t)))
-                (goto-char (+ (point) item-short-header-length length))
-                (when (= type 1)
-                  (setq value (car (read-from-string value))))
-                (puthash key (cons t value) items))
-            ;; Non-inlined item.
-            (let ((item-header (bindat-unpack extmap--item-bindat-spec (encode-coding-string (buffer-substring-no-properties (point) (+ (point) item-header-length)) 'no-conversion))))
-              (goto-char (+ (point) item-header-length))
-              (puthash key (cons nil (cons type (cons (bindat-get-field item-header 'offset) length))) items)))))
+          (if (or (= type 2) (= type 3))
+              ;; Non-inlined item.
+              (let ((item-header (bindat-unpack extmap--item-bindat-spec (encode-coding-string (buffer-substring-no-properties (point) (+ (point) item-header-length)) 'no-conversion))))
+                (goto-char (+ (point) item-header-length))
+                (puthash key (cons nil (cons type (cons (bindat-get-field item-header 'offset) length))) items))
+            (let ((value (decode-coding-string (buffer-substring-no-properties (+ (point) item-short-header-length) (+ (point) item-short-header-length length)) 'utf-8 t)))
+              (goto-char (+ (point) item-short-header-length length))
+              (if (= type 4)
+                  ;; Shared-value item.
+                  (puthash key (cons nil (cons type (intern value))) items)
+                ;; Inlined item.
+                (if (= type 1)
+                    (setq value (car (read-from-string value)))
+                  (unless (= type 0)
+                    (error "Corrupted extmap file")))
+                (puthash key (cons t value) items))))))
       ;; Fifth element of `file-attributes' result is the modification date.
       ;; `file-attribute-modification-time' doesn't exist in Emacs 25.
       (list (cons filename (when (plist-get options :auto-reload) (nth 5 (file-attributes filename))))
@@ -189,16 +195,20 @@ returns nil."
                    (if (car value)
                        ;; Already loaded.
                        (cdr value)
-                     ;; Load now.
-                     (let ((coding-system-for-read 'utf-8)
-                           (offset                 (cadr (cdr value))))
-                       (with-temp-buffer
-                         (insert-file-contents (car (nth 0 extmap)) nil offset (+ offset (cddr (cdr value))))
-                         (let ((new-value (if (= (cadr value) 2) (buffer-string) (read (current-buffer)))))
-                           (if weak-data
-                               (puthash key new-value weak-data)
-                             (prog1 (setcdr value new-value)
-                               (setcar value t)))))))
+                     (let (new-value)
+                       (if (= (cadr value) 4)
+                           ;; Value is shared with a different key.
+                           (setq new-value (extmap-get extmap (cddr value)))
+                         ;; Load now.
+                         (let ((coding-system-for-read 'utf-8)
+                               (offset                 (cadr (cdr value))))
+                           (with-temp-buffer
+                             (insert-file-contents (car (nth 0 extmap)) nil offset (+ offset (cddr (cdr value))))
+                             (setq new-value (if (= (cadr value) 2) (buffer-string) (read (current-buffer)))))))
+                       (if weak-data
+                           (puthash key new-value weak-data)
+                         (prog1 (setcdr value new-value)
+                           (setcar value t)))))
                  (unless no-error
                    (error "No value for key `%s'" key))))
       value)))
@@ -217,10 +227,16 @@ In case the map has been initialized with `:weak-data' option, it
 may happen that this function returns t, but value for the KEY
 has to be loaded again in the future."
   (extmap--reload-if-needed extmap)
-  (or (car-safe (gethash key (nth 1 extmap)))
-      (let ((weak-data (nth 2 extmap)))
-        (when weak-data
-          (not (eq (gethash key weak-data weak-data) weak-data))))))
+  (let* ((items (nth 1 extmap))
+         (value (gethash key items)))
+    (or (car value)
+        (when value
+          (let ((synonym-of (when (= (cadr value) 4) (cddr value))))
+            (or (and synonym-of (car (gethash synonym-of items)))
+                (let ((weak-data (nth 2 extmap)))
+                  (when weak-data
+                    (or (not (eq (gethash key weak-data weak-data) weak-data))
+                        (and synonym-of (not (eq (gethash synonym-of weak-data weak-data) weak-data))))))))))))
 
 (defun extmap-keys (extmap)
   "Return a list of all the keys in the map.
@@ -310,6 +326,13 @@ OPTIONS can be a list of the following keyword arguments:
     file already exists.  However, you can order it to
     overwrite (not merge!) the file.
 
+  :share-values
+
+    When values for different keys are equal, store only one copy
+    in the database.  This can decrease database size, but you
+    must be prepared that `extmap-get' can return `eq' values for
+    different keys (for this reason, this is not the default).
+
   :max-inline-bytes
 
     Inline values for which `print' results in this many bytes.
@@ -343,6 +366,7 @@ Only available on Emacs 25, as this requires `generator' package."
   (with-temp-buffer
     (let ((print-level                nil)
           (print-length               nil)
+          (shared-values              (when (plist-get options :share-values) (make-hash-table :test #'extmap--equal-including-properties)))
           (max-inline-bytes           (or (plist-get options :max-inline-bytes) 16))
           (offset                     (bindat-length extmap--header-bindat-spec nil))
           (buffer                     (current-buffer))
@@ -365,26 +389,36 @@ Only available on Emacs 25, as this requires `generator' package."
             (puthash key t used-keys)
             (insert (encode-coding-string (symbol-name key) 'utf-8 t))
             (insert 0)
-            (with-temp-buffer
-              (let ((serialized (if (extmap--plain-string-p value) value (prin1-to-string value))))
-                (unless (or (extmap--plain-string-p value) (condition-case _ (equal (read serialized) value) (error nil)))
-                  (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
-                (insert (encode-coding-string serialized 'utf-8 t))
-                (let ((num-bytes (buffer-size)))
-                  (if (<= num-bytes max-inline-bytes)
-                      (let ((serialized-in (current-buffer)))
-                        (with-current-buffer buffer
-                          (insert (bindat-pack extmap--item-short-bindat-spec `((type . ,(if (extmap--plain-string-p value) 0 1)) (length . ,num-bytes))))
-                          (insert-buffer-substring serialized-in)))
-                    (write-region (point-min) (point-max) filename t)
-                    (with-current-buffer buffer
-                      (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (extmap--plain-string-p value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
-                      (setq offset (+ offset num-bytes))))))))))
+            (let ((serialized (if (extmap--plain-string-p value) value (prin1-to-string value))))
+              (unless (or (extmap--plain-string-p value) (condition-case _ (equal (read serialized) value) (error nil)))
+                (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
+              ;; The whole point of this buffer is to be used for
+              ;; `write-region' below (in the most common case).
+              (with-temp-buffer
+                (let* ((serialized-in (current-buffer))
+                       (num-bytes     (encode-coding-string serialized 'utf-8 t serialized-in))
+                       canonical-key)
+                  (cond ((<= num-bytes max-inline-bytes)
+                         (with-current-buffer buffer
+                           (insert (bindat-pack extmap--item-short-bindat-spec `((type . ,(if (extmap--plain-string-p value) 0 1)) (length . ,num-bytes))))
+                           (insert-buffer-substring serialized-in)))
+                        ((and shared-values (setq canonical-key (gethash value shared-values)))
+                         (with-current-buffer buffer
+                           (let ((encoded (encode-coding-string (symbol-name canonical-key) 'utf-8 t)))
+                             (insert (bindat-pack extmap--item-short-bindat-spec `((type . 4) (length . ,(length encoded))))
+                                     encoded))))
+                        (t
+                         (write-region (point-min) (point-max) filename t)
+                         (with-current-buffer buffer
+                           (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (extmap--plain-string-p value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
+                           (setq offset (+ offset num-bytes))
+                           (when shared-values
+                             (puthash value key shared-values)))))))))))
       (write-region (point-min) (point-max) filename t)
       ;; Update the header.
       (erase-buffer)
       (insert (bindat-pack extmap--header-bindat-spec `((magic     . #x91f7)
-                                                        (version   . 0)
+                                                        (version   . 1)
                                                         (num-items . ,(hash-table-count used-keys))
                                                         (offset    . ,offset))))
       (write-region (point-min) (point-max) filename 0))))
@@ -393,6 +427,66 @@ Only available on Emacs 25, as this requires `generator' package."
   (and (stringp object)
        (null (text-properties-at 0 object))
        (null (next-property-change 0 object))))
+
+;; This is like built-in `equal-including-properties', except that
+;; property values are compared with the same function, not with `eq'.
+;; Slow, but is used only during extmap creation and testing, both of
+;; which are not performance-critical.
+(defun extmap--equal-including-properties (a b)
+  (cond ((stringp a)
+         (and (stringp b)
+              (string= a b)
+              (let ((at    0)
+                    (equal t))
+                (while (and at equal)
+                  (let ((next (next-property-change at a)))
+                    (setq equal (and (equal next (next-property-change at b))
+                                     (let ((a-properties    (text-properties-at at a))
+                                           (b-properties    (text-properties-at at b))
+                                           (a-property-hash (make-hash-table))
+                                           (b-property-hash (make-hash-table)))
+                                       (while a-properties
+                                         (puthash (pop a-properties) (pop a-properties) a-property-hash))
+                                       (while b-properties
+                                         (puthash (pop b-properties) (pop b-properties) b-property-hash))
+                                       (extmap--equal-including-properties a-property-hash b-property-hash)))
+                          at    next)))
+                equal)))
+        ((consp a)
+         (let ((equal t))
+           (while (if (and (consp b) (extmap--equal-including-properties (car a) (car b)))
+                      (consp (setq b (cdr b)
+                                   a (cdr a)))
+                    (setq equal nil)))
+           (and equal (extmap--equal-including-properties a b))))
+        ((or (vectorp a) (with-no-warnings (when (fboundp #'recordp) (recordp a))))
+         (and (if (vectorp a) (vectorp b) (with-no-warnings (recordp b)))
+              (let ((length (length a)))
+                (and (= length (length b))
+                     (let ((equal t)
+                           (k     0))
+                       (while (< k length)
+                         (if (extmap--equal-including-properties (aref a k) (aref b k))
+                             (setq k (1+ k))
+                           (setq k     length
+                                 equal nil)))
+                       equal)))))
+        ((hash-table-p a)
+         (and (hash-table-p b)
+              (= (hash-table-count a) (hash-table-count b))
+              (catch 'equal
+                (maphash (lambda (key value)
+                           (unless (extmap--equal-including-properties value (gethash key b (not a)))
+                             (throw 'equal nil)))
+                         a)
+                t)))
+        ;; Works for all the primitive types, as well as for bool vectors.
+        (t
+         (equal a b))))
+
+;; No special hashing function: `sxhash' ignores text properties, but
+;; it is not required that hashes of different values are different.
+(define-hash-table-test 'extmap--equal-including-properties #'extmap--equal-including-properties #'sxhash)
 
 
 (provide 'extmap)
