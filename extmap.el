@@ -333,6 +333,14 @@ OPTIONS can be a list of the following keyword arguments:
     must be prepared that `extmap-get' can return `eq' values for
     different keys (for this reason, this is not the default).
 
+  :compress-values
+
+    Replace equal parts within values with the same object.  This
+    can decrease database size, but you must be prepared that
+    values returned `extmap-get' can contain `eq' elements (in
+    lists, vectors, etc.).  It also makes map creation noticeably
+    slower.  For these reason, this is not the default.
+
   :max-inline-bytes
 
     Inline values for which `print' results in this many bytes.
@@ -367,6 +375,7 @@ Only available on Emacs 25, as this requires `generator' package."
     (let ((print-level                nil)
           (print-length               nil)
           (shared-values              (when (plist-get options :share-values) (make-hash-table :test #'extmap--equal-including-properties)))
+          (canonical-subvalues        (when (plist-get options :compress-values) (make-hash-table :test #'extmap--equal-including-properties)))
           (max-inline-bytes           (or (plist-get options :max-inline-bytes) 16))
           (offset                     (bindat-length extmap--header-bindat-spec nil))
           (buffer                     (current-buffer))
@@ -389,7 +398,14 @@ Only available on Emacs 25, as this requires `generator' package."
             (puthash key t used-keys)
             (insert (encode-coding-string (symbol-name key) 'utf-8 t))
             (insert 0)
-            (let ((serialized (if (extmap--plain-string-p value) value (prin1-to-string value))))
+            (let ((serialized (if (extmap--plain-string-p value)
+                                  value
+                                (let ((print-circle               t)
+                                      (print-continuous-numbering nil))
+                                  (when canonical-subvalues
+                                    (clrhash canonical-subvalues)
+                                    (setq value (extmap--compress-value value canonical-subvalues)))
+                                  (prin1-to-string value)))))
               (unless (or (extmap--plain-string-p value) (condition-case _ (equal (read serialized) value) (error nil)))
                 (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
               ;; The whole point of this buffer is to be used for
@@ -427,6 +443,38 @@ Only available on Emacs 25, as this requires `generator' package."
   (and (stringp object)
        (null (text-properties-at 0 object))
        (null (next-property-change 0 object))))
+
+(defun extmap--compress-value (value canonical-subvalues)
+  (cond ((stringp value)
+         (if (and (<= (length value) 4) (extmap--plain-string-p value))
+             ;; Don't try to compress very short strings without text properties.
+             value
+           (or (gethash value canonical-subvalues)
+               (puthash value value canonical-subvalues))))
+        ((consp value)
+         (let ((original-value value)
+               canonical-head
+               canonical-tail)
+           (while (unless (setq canonical-tail (gethash value canonical-subvalues))
+                    (push (extmap--compress-value (car value) canonical-subvalues) canonical-head)
+                    (consp (setq value (cdr value)))))
+           (setq canonical-head (nreverse canonical-head))
+           (puthash original-value
+                    (if canonical-tail
+                        (nconc canonical-head canonical-tail)
+                      (when value
+                        (setcdr (last canonical-head) (extmap--compress-value value canonical-subvalues)))
+                      canonical-head)
+                    canonical-subvalues)))
+        ((or (vectorp value) (with-no-warnings (when (fboundp #'recordp) (recordp value))))
+         (or (gethash value canonical-subvalues)
+             (let* ((length (length value))
+                    (result (if (vectorp value) (make-vector length nil) (with-no-warnings (make-record nil (1- length) nil)))))
+               (dotimes (k length)
+                 (aset result k (extmap--compress-value (aref value k) canonical-subvalues)))
+               (puthash value result canonical-subvalues))))
+        (t
+         value)))
 
 ;; This is like built-in `equal-including-properties', except that
 ;; property values are compared with the same function, not with `eq'.

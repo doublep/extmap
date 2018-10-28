@@ -39,6 +39,11 @@
 (defun extmap--test-sort-keys (keys)
   (sort keys (lambda (a b) (string< (symbol-name a) (symbol-name b)))))
 
+(defun extmap--test-compress-value (value)
+  (let ((compressed (extmap--compress-value value (make-hash-table :test #'extmap--equal-including-properties))))
+    (should (equal compressed value))
+    compressed))
+
 
 (ert-deftest extmap-1 ()
   (extmap--test-alist `((foo  . 1)
@@ -73,6 +78,18 @@
                         (bar . (value with different ,(propertize "string properties" 'face 'italic) must not be shared)))
                       :share-values t :max-inline-bytes 0))
 
+(ert-deftest extmap-compressed-values-1 ()
+  (let* ((extmap (extmap--test-alist `((foo . (compress-this: (1 2 3) (1 2 3) (0 1 2 3)))
+                                       (bar . (compress-this: (1 2 3) (1 2 3) (0 1 2 3))))
+                                     :compress-values t :max-inline-bytes 0))
+         (foo    (extmap-get extmap 'foo))
+         (bar    (extmap-get extmap 'bar)))
+    (should     (eq (nth 1 foo) (nth 2 foo)))
+    (should     (eq (nth 2 foo) (cdr (nth 3 foo))))
+    (should     (eq (nth 1 bar) (nth 2 bar)))
+    (should     (eq (nth 2 bar) (cdr (nth 3 bar))))
+    (should-not (eq foo bar))))
+
 
 (ert-deftest extmap-plain-string-p ()
   (should (extmap--plain-string-p "foo"))
@@ -97,3 +114,12 @@
   (should (extmap--equal-including-properties (vector 1 2 3) (vector 1 2 3)))
   (should (extmap--equal-including-properties "foo" "foo"))
   (should (extmap--equal-including-properties (propertize "foo" 'face (list 'bold 'italic)) (propertize "foo" 'face (list 'bold 'italic)))))
+
+(ert-deftest extmap-internal-compress-value ()
+  (extmap--test-compress-value '(nothing to compress here))
+  (let ((compressed (extmap--test-compress-value '((1 2 3) (4 5 6) (1 2 3)))))
+    (should (eq (nth 0 compressed) (nth 2 compressed))))
+  (let ((compressed (extmap--test-compress-value '((1 2 3) (4 5 6) . (1 2 3)))))
+    (should (eq (car compressed) (cddr compressed))))
+  (let ((compressed (extmap--test-compress-value '[[1 2 3] [4 5 6] [1 2 3]])))
+    (should (eq (aref compressed 0) (aref compressed 2)))))
