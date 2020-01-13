@@ -1,2 +1,8 @@
+/.eldev
+/Eldev-local
+
 *.elc
-test/*.extmap
+
+/dist
+
+/test/*.extmap
