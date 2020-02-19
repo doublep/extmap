@@ -1,5 +1,5 @@
 [![License: GPL 3](https://img.shields.io/badge/license-GPL_3-green.svg)](http://www.gnu.org/licenses/gpl-3.0.txt)
-[![Build Status](https://secure.travis-ci.org/doublep/extmap.png)](http://travis-ci.org/doublep/extmap)
+[![CI](https://github.com/doublep/extmap/workflows/CI/badge.svg)](https://github.com/doublep/extmap/actions?query=workflow%3ACI)
 
 
 # extmap
