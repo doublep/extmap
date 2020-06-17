@@ -11,6 +11,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    continue-on-error: ${{matrix.allow_failures}}
+
     strategy:
       matrix:
         emacs_version:
@@ -27,6 +29,12 @@ jobs:
           - 26.2
           - 26.3
 
+        allow_failures: [false]
+
+        include:
+          - emacs_version: snapshot
+            allow_failures: true
+
     steps:
     - name: Set up Emacs
       uses: purcell/setup-emacs@master
@@ -41,5 +49,5 @@ jobs:
 
     - name: Test the project
       run: |
-        eldev -p -dtT test --expect 5
-        eldev -dtT compile --warnings-as-errors
+        eldev -p -dtT -C test --expect 5
+        eldev -dtT -C compile --warnings-as-errors
