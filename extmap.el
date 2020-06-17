@@ -384,7 +384,7 @@ Only available on Emacs 25, as this requires `generator' package."
           (used-keys                   (make-hash-table :test #'eq)))
       ;; Will be replaced at the end.
       (insert (bindat-pack extmap--header-bindat-spec nil))
-      (write-region (point-min) (point-max) filename nil nil nil (if (plist-get options :overwrite) nil 'excl))
+      (write-region nil nil filename nil 'no-message nil (if (plist-get options :overwrite) nil 'excl))
       (erase-buffer)
       (catch 'end-of-data
         (while t
@@ -424,20 +424,20 @@ Only available on Emacs 25, as this requires `generator' package."
                              (insert (bindat-pack extmap--item-short-bindat-spec `((type . 4) (length . ,(length encoded))))
                                      encoded))))
                         (t
-                         (write-region (point-min) (point-max) filename t)
+                         (write-region nil nil filename t 'no-message)
                          (with-current-buffer buffer
                            (insert (bindat-pack extmap--item-bindat-spec `((type . ,(if (extmap--plain-string-p value) 2 3)) (length . ,num-bytes) (offset . ,offset))))
                            (setq offset (+ offset num-bytes))
                            (when shared-values
                              (puthash value key shared-values)))))))))))
-      (write-region (point-min) (point-max) filename t)
+      (write-region nil nil filename t 'no-message)
       ;; Update the header.
       (erase-buffer)
       (insert (bindat-pack extmap--header-bindat-spec `((magic     . #x91f7)
                                                         (version   . 1)
                                                         (num-items . ,(hash-table-count used-keys))
                                                         (offset    . ,offset))))
-      (write-region (point-min) (point-max) filename 0))))
+      (write-region nil nil filename 0 'no-message))))
 
 (defun extmap--plain-string-p (object)
   (and (stringp object)
