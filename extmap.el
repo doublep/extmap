@@ -405,7 +405,13 @@ Only available on Emacs 25, as this requires `generator' package."
                                   (when canonical-subvalues
                                     (clrhash canonical-subvalues)
                                     (setq value (extmap--compress-value value canonical-subvalues)))
-                                  (prin1-to-string value)))))
+                                  ;; Workaround for Emacs (27?) not using the print circle for
+                                  ;; strings on the first level.  At this point I no longer care to
+                                  ;; report bugs in Emacs.  Fuck it, it's faster and easier to just
+                                  ;; add workarounds
+                                  (if (stringp value)
+                                      (prin1-to-string value)
+                                    (substring (prin1-to-string (list value)) 1 -1))))))
               (unless (or (extmap--plain-string-p value) (condition-case _ (equal (read serialized) value) (error nil)))
                 (error "Value for key `%s' cannot be saved in database: it cannot be read back or is different after reading" key))
               ;; The whole point of this buffer is to be used for

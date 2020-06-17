@@ -90,6 +90,13 @@
     (should     (eq (nth 2 bar) (cdr (nth 3 bar))))
     (should-not (eq foo bar))))
 
+(ert-deftest extmap-compressed-values-2 ()
+  ;; Targeted at a specific bug in Emacs.  Extmap adds a workaround for it.
+  (let* ((extmap (extmap--test-alist `((foo . ("some long string" "some long string")))
+                                     :compress-values t :max-inline-bytes 0))
+         (foo    (extmap-get extmap 'foo)))
+    (should     (eq (nth 0 foo) (nth 1 foo)))))
+
 
 (ert-deftest extmap-plain-string-p ()
   (should (extmap--plain-string-p "foo"))
