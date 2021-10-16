@@ -2,38 +2,24 @@ name: CI
 
 on:
   push:
-    paths-ignore:
-      - '**.md'
+    paths-ignore: ['**.md', '**.adoc']
   pull_request:
-    paths-ignore:
-      - '**.md'
+    paths-ignore: ['**.md', '**.adoc']
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    continue-on-error: ${{matrix.allow_failures}}
+    continue-on-error: ${{matrix.emacs_version == 'snapshot'}}
 
     strategy:
       matrix:
-        emacs_version:
-          # Not supported by Eldev; not terribly important.
-          # - 24.1
-          # - 24.2
-          # - 24.3
-          - 24.4
-          - 24.5
-          - 25.1
-          - 25.2
-          - 25.3
-          - 26.1
-          - 26.2
-          - 26.3
-
-        allow_failures: [false]
-
-        include:
-          - emacs_version: snapshot
-            allow_failures: true
+        # Not supported by Eldev; not terribly important.
+        # '24.1', '24.2', '24.3'
+        emacs_version: ['24.4',
+                        '25.1', '25.2', '25.3',
+                        '26.1', '26.2', '26.3',
+                        '27.1', '27.2',
+                        'snapshot']
 
     steps:
     - name: Set up Emacs
@@ -49,5 +35,5 @@ jobs:
 
     - name: Test the project
       run: |
-        eldev -p -dtT -C test --expect 5
+        eldev -p -dtT -C test --expect 10
         eldev -dtT -C compile --warnings-as-errors

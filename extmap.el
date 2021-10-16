@@ -80,6 +80,7 @@
                                            (offset    u32)))
 
 
+
 (defun extmap-init (filename &rest options)
   "Load metadata of a previously created map from FILENAME.
 
@@ -307,6 +308,7 @@ any time."
       (auto-reload . ,(not (null (cdr (nth 0 extmap))))))))
 
 
+
 (defun extmap-from-alist (filename data &rest options)
   "Create an externally-stored map from given DATA.
 
@@ -484,8 +486,8 @@ Only available on Emacs 25, as this requires `generator' package."
 
 ;; This is like built-in `equal-including-properties', except that
 ;; property values are compared with the same function, not with `eq'.
-;; Slow, but is used only during extmap creation and testing, both of
-;; which are not performance-critical.
+;; Slow, but is used only during extmap creation, testing and diffing,
+;; all of which are not performance-critical.
 (defun extmap--equal-including-properties (a b)
   (cond ((stringp a)
          (and (stringp b)
@@ -541,6 +543,87 @@ Only available on Emacs 25, as this requires `generator' package."
 ;; No special hashing function: `sxhash' ignores text properties, but
 ;; it is not required that hashes of different values are different.
 (define-hash-table-test 'extmap--equal-including-properties #'extmap--equal-including-properties #'sxhash)
+
+
+
+(defun extmap-equal-p (extmap1 extmap2 &optional keys-to-ignore describe)
+  "Compare two maps.
+Don't count any differences in KEYS-TO-IGNORE (must be a list).
+Return non-nil if the two maps are equal for all other keys.
+
+When optional argument DESCRIBE is set, also print information
+about differences to a new buffer and present it, if there are
+any.  Non-interactively, print this to stdout.  The information
+is in free form meant only for humans.  Presentation can thus be
+improved or otherwise changed in future versions."
+  (when (stringp extmap1)
+    (setq extmap1 (extmap-init extmap1)))
+  (when (stringp extmap2)
+    (setq extmap2 (extmap-init extmap2)))
+  (setq keys-to-ignore (let ((lookup (make-hash-table :test #'eq)))
+                         (dolist (key keys-to-ignore)
+                           (puthash key t lookup))
+                         (remhash nil lookup)
+                         lookup))
+  (catch 'done
+    (with-temp-buffer
+      (let* ((keys1            (sort (extmap-keys extmap1) #'string<))
+             (keys2            (sort (extmap-keys extmap2) #'string<))
+             (scan1            keys1)
+             (scan2            keys2)
+             (only-in-1-lookup (make-hash-table :test #'eq))
+             only-in-1
+             only-in-2)
+        (while (or scan1 scan2)
+          (let ((key1 (car scan1))
+                (key2 (car scan2)))
+            (if (eq key1 key2)
+                (setq scan1 (cdr scan1)
+                      scan2 (cdr scan2))
+              (cond ((gethash key1 keys-to-ignore)
+                     (setq scan1 (cdr scan1)))
+                    ((gethash key2 keys-to-ignore)
+                     (setq scan2 (cdr scan2)))
+                    (t
+                     (unless describe
+                       (throw 'done nil))
+                     (if (and key1 (or (null key2) (string< key1 key2)))
+                         (progn (setq only-in-1 (cons key1 only-in-1)
+                                      scan1     (cdr scan1))
+                                (puthash key1 t only-in-1-lookup))
+                       (setq only-in-2 (cons key2 only-in-2)
+                             scan2     (cdr scan2))))))))
+        (when only-in-1
+          (insert "Only in the first extmap:\n")
+          (dolist (key (nreverse only-in-1))
+            (insert "    " (symbol-name key) "\n")))
+        (when only-in-2
+          (insert "Only in the second extmap:\n")
+          (dolist (key (nreverse only-in-2))
+            (insert "    " (symbol-name key) "\n")))
+        (dolist (key keys1)
+          (unless (or (gethash key keys-to-ignore) (gethash key only-in-1-lookup))
+            (let ((value1 (extmap-get extmap1 key))
+                  (value2 (extmap-get extmap2 key)))
+              (unless (extmap--equal-including-properties value1 value2)
+                (unless describe
+                  (throw 'done nil))
+                (insert (symbol-name key) ":\n" (prin1-to-string value1) "\n" (prin1-to-string value2) "\n"))))))
+      (if describe
+          (if (= (point) 1)
+              (progn (message "There are no differences")
+                     t)
+            (let ((differences (buffer-string)))
+              (if noninteractive
+                  (princ differences)
+                (let ((buffer (get-buffer-create " *Extmap differences*")))
+                  (set-buffer buffer)
+                  (erase-buffer)
+                  (insert differences)
+                  (goto-char (point-min))
+                  (display-buffer buffer))))
+            nil)
+        t))))
 
 
 (provide 'extmap)

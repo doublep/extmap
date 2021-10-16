@@ -39,6 +39,30 @@ exists.  However, you can tell it to overwrite it instead:
     (extmap-from-alist ... :overwrite t)
 
 
+## Comparing two maps
+
+Sometimes it might be useful to find out what is different between two
+maps, especially when they are two consequent versions of the same
+map.  This is not trivial as map files are binary.
+
+However, starting with 1.2 there is function `extmap-equal-p` for
+this.  By default it gives just a boolean value (`t` or `nil`), but
+optionally you can ask it to explain the differences in human-readable
+way.  Another useful option is to let it ignore all changes associated
+with certain keys.  Example usage would look like this:
+
+    (extmap-equal-p "my-data.extmap.old" "my-data.extmap"
+                    '(version cache) t)
+
+Here we compare the map stored in file `my-data.extmap` with
+(presumably a manually made) old copy in `my-data.extmap.old`.  We
+instruct the function to ignore all changes in associations for keys
+`version` and `cache`, and print information about other discovered
+differences — if any.
+
+The function can be run both from normal Emacs and non-interactively.
+
+
 ## Using a map
 
 Using a map is also easy.  First, you need to initialize it:
