@@ -537,7 +537,7 @@ Only available on Emacs 25, as this requires `generator' package."
               (= (hash-table-count a) (hash-table-count b))
               (catch 'equal
                 (maphash (lambda (key value)
-                           (unless (extmap--equal-including-properties value (gethash key b (not a)))
+                           (unless (extmap--equal-including-properties value (gethash key b (not value)))
                              (throw 'equal nil)))
                          a)
                 t)))

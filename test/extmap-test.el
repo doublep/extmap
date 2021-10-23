@@ -183,6 +183,14 @@
   (should (extmap--equal-including-properties "foo" "foo"))
   (should (extmap--equal-including-properties (propertize "foo" 'face (list 'bold 'italic)) (propertize "foo" 'face (list 'bold 'italic)))))
 
+(ert-deftest extmap-internal-equal-regression-1 ()
+  ;; Real bug spotted theoretically.
+  (let ((a (make-hash-table))
+        (b (make-hash-table)))
+    (puthash 'x nil a)
+    (puthash 'y 1   b)
+    (should-not (extmap--equal-including-properties a b))))
+
 (ert-deftest extmap-internal-compress-value ()
   (extmap--test-compress-value '(nothing to compress here))
   (let ((compressed (extmap--test-compress-value '((1 2 3) (4 5 6) (1 2 3)))))
