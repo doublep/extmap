@@ -497,15 +497,20 @@ Only available on Emacs 25, as this requires `generator' package."
                 (while (and at equal)
                   (let ((next (next-property-change at a)))
                     (setq equal (and (equal next (next-property-change at b))
-                                     (let ((a-properties    (text-properties-at at a))
-                                           (b-properties    (text-properties-at at b))
-                                           (a-property-hash (make-hash-table))
-                                           (b-property-hash (make-hash-table)))
-                                       (while a-properties
-                                         (puthash (pop a-properties) (pop a-properties) a-property-hash))
-                                       (while b-properties
-                                         (puthash (pop b-properties) (pop b-properties) b-property-hash))
-                                       (extmap--equal-including-properties a-property-hash b-property-hash)))
+                                     (let ((a-properties (text-properties-at at a))
+                                           (b-properties (text-properties-at at b)))
+                                       ;; Speedup, especially for plain strings: don't create
+                                       ;; hash-tables if there are no properties at all.
+                                       (or (and (null a-properties) (null b-properties))
+                                           (and a-properties b-properties
+                                                ;; Property keys are compared by `eq' everywhere.
+                                                (let ((a-property-hash (make-hash-table :test #'eq))
+                                                      (b-property-hash (make-hash-table :test #'eq)))
+                                                  (while a-properties
+                                                    (puthash (pop a-properties) (pop a-properties) a-property-hash))
+                                                  (while b-properties
+                                                    (puthash (pop b-properties) (pop b-properties) b-property-hash))
+                                                  (extmap--equal-including-properties a-property-hash b-property-hash))))))
                           at    next)))
                 equal)))
         ((consp a)
