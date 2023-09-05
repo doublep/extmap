@@ -1,6 +1,6 @@
 ;;; extmap.el --- Externally-stored constant mapping for Elisp  -*- lexical-binding: t -*-
 
-;; Copyright (C) 2018-2021 Paul Pogonyshev
+;; Copyright (C) 2018-2023 Paul Pogonyshev
 
 ;; Author:     Paul Pogonyshev <pogonyshev@gmail.com>
 ;; Maintainer: Paul Pogonyshev <pogonyshev@gmail.com>
