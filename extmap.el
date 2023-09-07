@@ -7,7 +7,7 @@
 ;; Version:    1.2.1
 ;; Keywords:   lisp
 ;; Homepage:   https://github.com/doublep/extmap
-;; Package-Requires: ((emacs "24.1"))
+;; Package-Requires: ((emacs "24.4"))
 
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
