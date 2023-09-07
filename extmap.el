@@ -113,11 +113,50 @@ OPTIONS can be a list of the following keyword arguments:
     developing, when you'd often re-generate disk files, though
     nothing precludes using it in end-code either.
 
+  :preload-metadata
+
+    Immediately parse the header of the extmap file.  Otherwise
+    this is done lazily, on first access.  For consistency, it is
+    still an error if FILENAME points to an unreadable file.
+
 The file must remain accessible in case `extmap-get' needs to
 load a value later.  There is no need to somehow close a map:
 just stop using it."
+  (let ((extmap (list (cons filename (if (plist-get options :auto-reload) :auto-reload :not-initialized))
+                      nil (when (plist-get options :weak-data) (make-hash-table :test #'eq :weakness 'value)))))
+    (if (plist-get options :preload-metadata)
+        (extmap--do-reload-if-needed extmap)
+      ;; Still check that `filename' exists and is readable.
+      (unless (file-regular-p filename)
+        (signal 'file-error (list "Not a regular file" filename))))
+    extmap))
+
+;; After a call to this, any value in `extmap' other than the filename
+;; might change.
+(defsubst extmap--reload-if-needed (extmap)
+  (let ((modtime (cdr (nth 0 extmap))))
+    (when modtime
+      (extmap--do-reload-if-needed extmap))))
+
+(defun extmap--do-reload-if-needed (extmap)
+  (let* ((filename     (car (nth 0 extmap)))
+         (modtime-then (cdr (nth 0 extmap)))
+         ;; Fifth element of `file-attributes' result is the modification date.
+         ;; `file-attribute-modification-time' doesn't exist in Emacs 25.
+         (modtime-now  (nth 5 (file-attributes filename))))
+    (cond ((keywordp modtime-then)
+           ;; Means the map has not been initialized yet.
+           (progn (extmap--do-initialize extmap)
+                  (setf (cdr (nth 0 extmap)) (when (eq modtime-then :auto-reload) modtime-now))))
+          ((not (equal modtime-now modtime-then))
+           (let ((reloaded-extmap (extmap-init filename :auto-reload t :weak-data (nth 2 extmap) :preload-metadata t)))
+             (setf (car extmap) (car reloaded-extmap))
+             (setf (cdr extmap) (cdr reloaded-extmap)))))))
+
+(defun extmap--do-initialize (extmap)
   (with-temp-buffer
-    (let* ((header-length            (bindat-length extmap--header-bindat-spec     nil))
+    (let* ((filename                 (car (nth 0 extmap)))
+           (header-length            (bindat-length extmap--header-bindat-spec     nil))
            (item-short-header-length (bindat-length extmap--item-short-bindat-spec nil))
            (item-header-length       (bindat-length extmap--item-bindat-spec       nil))
            (read-as                  (insert-file-contents-literally filename nil 0 header-length))
@@ -152,27 +191,7 @@ just stop using it."
                   (unless (= type 0)
                     (error "Corrupted extmap file")))
                 (puthash key (cons t value) items))))))
-      ;; Fifth element of `file-attributes' result is the modification date.
-      ;; `file-attribute-modification-time' doesn't exist in Emacs 25.
-      (list (cons filename (when (plist-get options :auto-reload) (nth 5 (file-attributes filename))))
-            items (when (plist-get options :weak-data) (make-hash-table :test #'eq :weakness 'value))))))
-
-;; After a call to this, any value in `extmap' other than the filename
-;; might change.
-(defsubst extmap--reload-if-needed (extmap)
-  (let ((modtime (cdr (nth 0 extmap))))
-    (when modtime
-      (extmap--do-reload-if-needed extmap))))
-
-(defun extmap--do-reload-if-needed (extmap)
-  (let ((filename (car (nth 0 extmap)))
-        (modtime  (cdr (nth 0 extmap))))
-    ;; Fifth element of `file-attributes' result is the modification date.
-    ;; `file-attribute-modification-time' doesn't exist in Emacs 25.
-    (unless (equal (nth 5 (file-attributes filename)) modtime)
-      (let ((reloaded-extmap (extmap-init filename :auto-reload t :weak-data (nth 2 extmap))))
-        (setcar extmap (car reloaded-extmap))
-        (setcdr extmap (cdr reloaded-extmap))))))
+      (setf (nth 1 extmap) items))))
 
 
 (defun extmap-get (extmap key &optional no-error)

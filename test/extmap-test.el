@@ -22,23 +22,35 @@
 
 (defconst extmap--test-directory (file-name-directory (or load-file-name (buffer-file-name))))
 
-(defvar extmap--test-filename nil)
+(defun extmap--test-file (&optional filename)
+  (expand-file-name (or filename "test.extmap") extmap--test-directory))
 
 
 (defun extmap--test-alist (data &rest options)
-  (let ((filename (concat extmap--test-directory (or extmap--test-filename "test.extmap"))))
+  (let ((filename (extmap--test-file))
+        extmap)
     (apply #'extmap-from-alist filename data :overwrite t options)
-    (let ((extmap (extmap-init filename)))
-      (should (equal (sort (mapcar #'car data) #'string<) (sort (extmap-keys extmap) #'string<)))
-      (dolist (entry data)
-        (should (extmap-contains-key extmap (car entry)))
-        (should (extmap--equal-including-properties (extmap-get extmap (car entry)) (cdr entry)))
-        (should (extmap-value-loaded extmap (car entry))))
-      extmap)))
+    ;; By default, test both without and with preloading metadata.
+    (dolist (preload-metadata (or (plist-get options :preload-metadata) '(nil t)))
+      (setq extmap (extmap--do-test-alist filename data preload-metadata)))
+    extmap))
+
+(defun extmap--do-test-alist (filename data preload-metadata)
+  (let ((extmap (extmap-init filename :preload-metadata preload-metadata)))
+    ;; It's fine to access internals in our own tests.
+    (if preload-metadata
+        (should (hash-table-p (nth 1 extmap)))
+      (should (null (nth 1 extmap))))
+    (should (equal (sort (mapcar #'car data) #'string<) (sort (extmap-keys extmap) #'string<)))
+    (dolist (entry data)
+      (should (extmap-contains-key extmap (car entry)))
+      (should (extmap--equal-including-properties (extmap-get extmap (car entry)) (cdr entry)))
+      (should (extmap-value-loaded extmap (car entry))))
+    extmap))
 
 (defun extmap--test-compare (data1 data2 &optional keys-to-ignore &rest options)
-  (let* ((filename1 (concat extmap--test-directory (or extmap--test-filename "test1.extmap")))
-         (filename2 (concat extmap--test-directory (or extmap--test-filename "test2.extmap"))))
+  (let* ((filename1 (extmap--test-file "test1.extmap"))
+         (filename2 (extmap--test-file "test2.extmap")))
     (apply #'extmap-from-alist filename1 data1 :overwrite t options)
     (apply #'extmap-from-alist filename2 data2 :overwrite t options)
     (extmap-equal-p filename1 filename2 keys-to-ignore)))
@@ -100,6 +112,13 @@
                                      :compress-values t :max-inline-bytes 0))
          (foo    (extmap-get extmap 'foo)))
     (should     (eq (nth 0 foo) (nth 1 foo)))))
+
+
+(ert-deftest extmap-init-signals-for-non-existing-file ()
+  (should-error (extmap-init (extmap--test-file "this-file-shouldnt-exist-or-test-will-fail.extmap"))
+                :type 'file-error)
+  (should-error (extmap-init (extmap--test-file "this-file-shouldnt-exist-or-test-will-fail.extmap") :preload-metadata t)
+                :type 'file-error))
 
 
 (ert-deftest extmap-equal-p-1 ()
