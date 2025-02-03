@@ -6,3 +6,7 @@
 /dist
 
 /test/*.extmap
+
+# Helpful for those who check out this out directly into `~/.emacs.d/elpa'.
+/extmap-autoloads.el
+/extmap-pkg.el
